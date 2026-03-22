@@ -30,3 +30,15 @@ html, body {
     z-index: 500;
     pointer-events: none;
 }
+
+#speedInfo {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 1000;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    font-family: Arial, sans-serif;
+}
