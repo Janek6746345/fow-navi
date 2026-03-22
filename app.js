@@ -1,4 +1,4 @@
-const TEST_MODE = true;
+const TEST_MODE = false;
 
 // Helbra als Startpunkt
 const TEST_LAT = 51.5576;
