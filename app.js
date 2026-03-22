@@ -10,14 +10,15 @@ const REVEAL_STEP_METERS = 20;    // Abstand zwischen Reveal-Punkten
 
 // Karte erstellen
 const map = L.map('map', {
-    maxZoom: 22,
+    maxZoom: 19,
     zoomSnap: 0.5,
     zoomDelta: 0.5
 }).setView([TEST_LAT, TEST_LNG], 14);
 
 // OpenStreetMap Layer
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19
 }).addTo(map);
 
 let userMarker = null;
@@ -26,9 +27,12 @@ let routeLine = null;
 let lastRevealPoint = null;
 let discoveredAreas = [];
 let discoveredPoints = [];
+let lastPositionTime = null;
+let currentSpeedKmh = 0;
+const speedInfoEl = document.getElementById("speedInfo");
 let lastDrawTime = 0;
 const DRAW_INTERVAL = 100; // ms (10 FPS reicht locker)
-
+let lastAcceptedPoint = null;
 
 const canvas = document.getElementById("fogCanvas");
 const ctx = canvas.getContext("2d");
@@ -85,7 +89,8 @@ function revealPath(fromLat, fromLng, toLat, toLng) {
         return;
     }
 
-    const steps = Math.max(1, Math.ceil(distance / REVEAL_STEP_METERS));
+    const dynamicStep = getDynamicRevealStep(currentSpeedKmh);
+    const steps = Math.max(1, Math.ceil(distance / dynamicStep));
 
     for (let i = 1; i <= steps; i++) {
         const t = i / steps;
@@ -95,28 +100,89 @@ function revealPath(fromLat, fromLng, toLat, toLng) {
     }
 }
 
-function updatePosition(lat, lng) {
-    if (lastRevealPoint) {
-        const dist = map.distance(lastRevealPoint, [lat, lng]);
-        if (dist < 5) return; // unter 5m ignorieren
+function updateSpeedDisplay(speedKmh) {
+    speedInfoEl.textContent = `Speed: ${speedKmh.toFixed(1)} km/h`;
+}
+
+function estimateSpeedKmh(lat, lng, timestampMs) {
+    if (!lastRevealPoint || !lastPositionTime) return 0;
+
+    const distanceMeters = map.distance(lastRevealPoint, [lat, lng]);
+    const deltaSeconds = (timestampMs - lastPositionTime) / 1000;
+
+    if (deltaSeconds <= 0) return 0;
+
+    const metersPerSecond = distanceMeters / deltaSeconds;
+    return metersPerSecond * 3.6;
+}
+
+function getDynamicRevealStep(speedKmh) {
+    if (speedKmh < 8) return 15;       // zu Fuß
+    if (speedKmh < 25) return 25;      // Joggen/Fahrrad
+    if (speedKmh < 80) return 40;      // Stadt/Landstraße
+    if (speedKmh < 180) return 80;     // Autobahn/Zug
+    return 150;                        // sehr schnell / Flugzeug grob
+}
+
+function isOutlierJump(lat, lng, speedKmh) {
+    if (!lastAcceptedPoint || !lastPositionTime) return false;
+
+    const now = Date.now();
+    const deltaSeconds = (now - lastPositionTime) / 1000;
+    if (deltaSeconds <= 0) return false;
+
+    const distanceMeters = map.distance(lastAcceptedPoint, [lat, lng]);
+    const estimatedKmh = (distanceMeters / deltaSeconds) * 3.6;
+
+    // sehr grobe Obergrenzen je nach Modus
+    if (speedKmh < 15 && estimatedKmh > 80) return true;
+    if (speedKmh < 80 && estimatedKmh > 250) return true;
+    if (estimatedKmh > 1200) return true;
+
+    return false;
+}
+
+function updatePosition(lat, lng, speedMps = null) {
+    const now = Date.now();
+
+    let speedKmh = 0;
+
+    if (typeof speedMps === "number" && !Number.isNaN(speedMps) && speedMps >= 0) {
+        speedKmh = speedMps * 3.6;
+    } else {
+        speedKmh = estimateSpeedKmh(lat, lng, now);
     }
+
+    currentSpeedKmh = speedKmh;
+    updateSpeedDisplay(currentSpeedKmh);
+
+    if (isOutlierJump(lat, lng, currentSpeedKmh)) {
+        console.log("Ausreißer ignoriert:", lat, lng, currentSpeedKmh.toFixed(1));
+        return;
+    }
+
     updateMarkerAndRoute(lat, lng);
 
     if (!lastRevealPoint) {
-        addRevealCircle(lat, lng);
-        lastRevealPoint = [lat, lng];
+    addRevealCircle(lat, lng);
+    lastRevealPoint = [lat, lng];
+    lastAcceptedPoint = [lat, lng];
+    lastPositionTime = now;
     } else {
         const [lastLat, lastLng] = lastRevealPoint;
         revealPath(lastLat, lastLng, lat, lng);
         lastRevealPoint = [lat, lng];
+        lastAcceptedPoint = [lat, lng];
+        lastPositionTime = now;
     }
 
-    console.log("Position:", lat, lng);
-    const now = Date.now();
-    if (now - lastDrawTime > DRAW_INTERVAL) {
+    const nowDraw = Date.now();
+    if (nowDraw - lastDrawTime > DRAW_INTERVAL) {
         drawFog();
-        lastDrawTime = now;
+        lastDrawTime = nowDraw;
     }
+
+    console.log("Position:", lat, lng, "Speed km/h:", currentSpeedKmh.toFixed(1));
 }
 
 if (TEST_MODE) {
@@ -133,7 +199,7 @@ if (TEST_MODE) {
     function playTestRoute() {
         if (i < testRoute.length) {
             const [lat, lng] = testRoute[i];
-            updatePosition(lat, lng);
+            updatePosition(lat, lng, 5);
             i++;
             setTimeout(playTestRoute, 1000);
         }
@@ -148,7 +214,8 @@ if (TEST_MODE) {
             (position) => {
                 const lat = position.coords.latitude;
                 const lng = position.coords.longitude;
-                updatePosition(lat, lng);
+                const speed = position.coords.speed;
+                updatePosition(lat, lng, speed);
             },
             (error) => {
                 console.error("GPS Fehler:", error);
