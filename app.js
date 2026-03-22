@@ -32,6 +32,8 @@ let currentSpeedKmh = 0;
 const speedInfoEl = document.getElementById("speedInfo");
 let lastDrawTime = 0;
 const DRAW_INTERVAL = 100; // ms (10 FPS reicht locker)
+const STATIONARY_SPEED_THRESHOLD = 1.5; // km/h
+const STATIONARY_DISTANCE_THRESHOLD = 8; // Meter
 let lastAcceptedPoint = null;
 let smoothedPoint = null;
 
@@ -182,6 +184,18 @@ function updatePosition(lat, lng, speedMps = null) {
     if (isOutlierJump(lat, lng, currentSpeedKmh)) {
         console.log("Ausreißer ignoriert:", lat, lng, currentSpeedKmh.toFixed(1));
         return;
+    }
+
+    if (lastAcceptedPoint) {
+        const driftDistance = map.distance(lastAcceptedPoint, [lat, lng]);
+
+        if (
+            currentSpeedKmh < STATIONARY_SPEED_THRESHOLD &&
+            driftDistance < STATIONARY_DISTANCE_THRESHOLD
+        ) {
+            console.log("Stillstand/Drift ignoriert:", driftDistance.toFixed(1), "m");
+            return;
+        }
     }
 
     const [smoothLat, smoothLng] = smoothPosition(lat, lng, currentSpeedKmh);
