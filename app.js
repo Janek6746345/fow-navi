@@ -9,7 +9,11 @@ const DISCOVERY_RADIUS = 60;      // Meter
 const REVEAL_STEP_METERS = 20;    // Abstand zwischen Reveal-Punkten
 
 // Karte erstellen
-const map = L.map('map').setView([TEST_LAT, TEST_LNG], 14);
+const map = L.map('map', {
+    maxZoom: 22,
+    zoomSnap: 0.5,
+    zoomDelta: 0.5
+}).setView([TEST_LAT, TEST_LNG], 14);
 
 // OpenStreetMap Layer
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -152,8 +156,8 @@ if (TEST_MODE) {
             },
             {
                 enableHighAccuracy: true,
-                maximumAge: 0,
-                timeout: 10000
+                maximumAge: 5000,
+                timeout: 15000
             }
         );
     } else {
@@ -221,7 +225,7 @@ function drawFog() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // kompletten Nebel zeichnen
-    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.fillStyle = "rgba(0, 0, 0, 1)";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Löcher ausschneiden
