@@ -33,6 +33,7 @@ const speedInfoEl = document.getElementById("speedInfo");
 let lastDrawTime = 0;
 const DRAW_INTERVAL = 100; // ms (10 FPS reicht locker)
 let lastAcceptedPoint = null;
+let smoothedPoint = null;
 
 const canvas = document.getElementById("fogCanvas");
 const ctx = canvas.getContext("2d");
@@ -142,6 +143,28 @@ function isOutlierJump(lat, lng, speedKmh) {
     return false;
 }
 
+function smoothPosition(lat, lng, speedKmh) {
+    if (!smoothedPoint) {
+        smoothedPoint = [lat, lng];
+        return smoothedPoint;
+    }
+
+    let alpha = 0.35; // Standard: eher ruhig
+
+    if (speedKmh < 10) alpha = 0.25;       // zu Fuß: stärker glätten
+    else if (speedKmh < 50) alpha = 0.35;  // langsam/mittel
+    else if (speedKmh < 120) alpha = 0.5;  // Auto/Landstraße
+    else alpha = 0.65;                     // sehr schnell: direkter folgen
+
+    const [oldLat, oldLng] = smoothedPoint;
+
+    const newLat = oldLat + (lat - oldLat) * alpha;
+    const newLng = oldLng + (lng - oldLng) * alpha;
+
+    smoothedPoint = [newLat, newLng];
+    return smoothedPoint;
+}
+
 function updatePosition(lat, lng, speedMps = null) {
     const now = Date.now();
 
@@ -161,17 +184,19 @@ function updatePosition(lat, lng, speedMps = null) {
         return;
     }
 
-    updateMarkerAndRoute(lat, lng);
+    const [smoothLat, smoothLng] = smoothPosition(lat, lng, currentSpeedKmh);
+
+    updateMarkerAndRoute(smoothLat, smoothLng);
 
     if (!lastRevealPoint) {
-    addRevealCircle(lat, lng);
-    lastRevealPoint = [lat, lng];
-    lastAcceptedPoint = [lat, lng];
-    lastPositionTime = now;
+        addRevealCircle(smoothLat, smoothLng);
+        lastRevealPoint = [smoothLat, smoothLng];
+        lastAcceptedPoint = [lat, lng];
+        lastPositionTime = now;
     } else {
         const [lastLat, lastLng] = lastRevealPoint;
-        revealPath(lastLat, lastLng, lat, lng);
-        lastRevealPoint = [lat, lng];
+        revealPath(lastLat, lastLng, smoothLat, smoothLng);
+        lastRevealPoint = [smoothLat, smoothLng];
         lastAcceptedPoint = [lat, lng];
         lastPositionTime = now;
     }
@@ -261,6 +286,8 @@ function resetProgress() {
     discoveredAreas = [];
     discoveredPoints = [];
     lastRevealPoint = null;
+    lastAcceptedPoint = null;
+    smoothedPoint = null;
 
     if (routeLine) {
         map.removeLayer(routeLine);
@@ -321,3 +348,6 @@ function drawFog() {
 }
 
 map.on("move", drawFog);
+
+
+resetProgress
