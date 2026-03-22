@@ -62,13 +62,7 @@ function updateMarkerAndRoute(lat, lng) {
 
 // Nur zeichnen
 function drawRevealCircle(lat, lng) {
-    const revealCircle = L.circle([lat, lng], {
-        radius: DISCOVERY_RADIUS,
-        stroke: false,
-        fillOpacity: 0.08
-    }).addTo(map);
-
-    discoveredAreas.push(revealCircle);
+    // Debug-Kreise deaktiviert
 }
 
 // Zeichnen + speichern
