@@ -5,15 +5,26 @@ const TEST_LAT = 51.5576;
 const TEST_LNG = 11.4924;
 
 // Aufdeckungs-Einstellungen
-const DISCOVERY_RADIUS = 60;      // Meter
-const REVEAL_STEP_METERS = 20;    // Abstand zwischen Reveal-Punkten
+const DISCOVERY_RADIUS = 60;
+
+const POI_DISCOVERY_RADIUS = 10;
+
+const pois = [
+    {
+        id: "test_poi_1",
+        name: "Test-Wahrzeichen",
+        lat: 51.5576,
+        lng: 11.4924,
+        discovered: false
+    }
+];
 
 // Karte erstellen
 const map = L.map('map', {
     maxZoom: 19,
     zoomSnap: 0.5,
     zoomDelta: 0.5
-}).setView([TEST_LAT, TEST_LNG], 14);
+}).setView([0, 0], 14);
 
 // OpenStreetMap Layer
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -27,33 +38,124 @@ let routeLine = null;
 let lastRevealPoint = null;
 let discoveredAreas = [];
 let discoveredPoints = [];
+let poiMarkers = [];
 let lastPositionTime = null;
 let currentSpeedKmh = 0;
-const speedInfoEl = document.getElementById("speedInfo");
-let lastDrawTime = 0;
-const DRAW_INTERVAL = 100; // ms (10 FPS reicht locker)
-const STATIONARY_SPEED_THRESHOLD = 1.5; // km/h
-const STATIONARY_DISTANCE_THRESHOLD = 8; // Meter
 let lastAcceptedPoint = null;
 let smoothedPoint = null;
+let hasInitialFix = false;
 
+let playerXP = 0;
+let playerLevel = 1;
+
+let lastDrawTime = 0;
+
+const DRAW_INTERVAL = 100; // ms
+const STATIONARY_SPEED_THRESHOLD = 1.5; // km/h
+const STATIONARY_DISTANCE_THRESHOLD = 8; // Meter
+
+const speedInfoEl = document.getElementById("speedInfo");
+const xpInfoEl = document.getElementById("xpInfo");
+const xpFillEl = document.getElementById("xpFill");
+const poiToastEl = document.getElementById("poiToast");
 const canvas = document.getElementById("fogCanvas");
 const ctx = canvas.getContext("2d");
 
 function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+    drawFog();
 }
 
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
+loadXP();
+loadPOIs();
+renderPOIMarkers();
+
+function savePOIs() {
+    localStorage.setItem("fow_pois", JSON.stringify(
+        pois.map(poi => ({
+            id: poi.id,
+            discovered: poi.discovered
+        }))
+    ));
+}
+
+function loadPOIs() {
+    const data = localStorage.getItem("fow_pois");
+    if (!data) return;
+
+    const savedPOIs = JSON.parse(data);
+
+    for (const savedPoi of savedPOIs) {
+        const poi = pois.find(p => p.id === savedPoi.id);
+        if (poi) {
+            poi.discovered = !!savedPoi.discovered;
+        }
+    }
+}
+
+function renderPOIMarkers() {
+    for (const marker of poiMarkers) {
+        map.removeLayer(marker);
+    }
+
+    poiMarkers = [];
+
+    for (const poi of pois) {
+        const marker = L.circleMarker([poi.lat, poi.lng], {
+            radius: 8,
+            color: poi.discovered ? "green" : "gold",
+            fillColor: poi.discovered ? "green" : "gold",
+            fillOpacity: 0.9,
+            weight: 2
+        });
+
+        marker.bindPopup(poi.name);
+        marker.addTo(map);
+        poiMarkers.push(marker);
+    }
+}
+
+function discoverPOI(poi) {
+    if (poi.discovered) return;
+
+    poi.discovered = true;
+    savePOIs();
+    renderPOIMarkers();
+    addXP(100);
+
+    if (poiToastEl) {
+        poiToastEl.textContent = `📍 Entdeckt: ${poi.name} (+100 EXP)`;
+        poiToastEl.style.opacity = "1";
+
+        setTimeout(() => {
+            poiToastEl.style.opacity = "0";
+        }, 2000);
+    }
+
+    console.log("POI entdeckt:", poi.name);
+}
+
+function checkPOIs(playerLat, playerLng) {
+    for (const poi of pois) {
+        if (poi.discovered) continue;
+
+        const distance = map.distance([playerLat, playerLng], [poi.lat, poi.lng]);
+
+        if (distance <= POI_DISCOVERY_RADIUS) {
+            discoverPOI(poi);
+        }
+    }
+}
 
 // Marker/Route aktualisieren
 function updateMarkerAndRoute(lat, lng) {
     const newPoint = [lat, lng];
 
     if (!userMarker) {
-    map.setView(newPoint, 16);
+        map.setView(newPoint, 16);
     }
 
     if (userMarker) {
@@ -71,9 +173,9 @@ function updateMarkerAndRoute(lat, lng) {
     }
 }
 
-// Nur zeichnen
+// Debug-Kreise deaktiviert
 function drawRevealCircle(lat, lng) {
-    // Debug-Kreise deaktiviert
+    // absichtlich leer
 }
 
 // Zeichnen + speichern
@@ -81,6 +183,7 @@ function addRevealCircle(lat, lng) {
     drawRevealCircle(lat, lng);
     discoveredPoints.push([lat, lng]);
     saveProgress();
+    addXP(1);
 }
 
 // Zwischenpunkte setzen, damit keine Lücken entstehen
@@ -137,7 +240,6 @@ function isOutlierJump(lat, lng, speedKmh) {
     const distanceMeters = map.distance(lastAcceptedPoint, [lat, lng]);
     const estimatedKmh = (distanceMeters / deltaSeconds) * 3.6;
 
-    // sehr grobe Obergrenzen je nach Modus
     if (speedKmh < 15 && estimatedKmh > 80) return true;
     if (speedKmh < 80 && estimatedKmh > 250) return true;
     if (estimatedKmh > 1200) return true;
@@ -151,12 +253,12 @@ function smoothPosition(lat, lng, speedKmh) {
         return smoothedPoint;
     }
 
-    let alpha = 0.35; // Standard: eher ruhig
+    let alpha = 0.35;
 
-    if (speedKmh < 10) alpha = 0.25;       // zu Fuß: stärker glätten
-    else if (speedKmh < 50) alpha = 0.35;  // langsam/mittel
-    else if (speedKmh < 120) alpha = 0.5;  // Auto/Landstraße
-    else alpha = 0.65;                     // sehr schnell: direkter folgen
+    if (speedKmh < 10) alpha = 0.25;
+    else if (speedKmh < 50) alpha = 0.35;
+    else if (speedKmh < 120) alpha = 0.5;
+    else alpha = 0.65;
 
     const [oldLat, oldLng] = smoothedPoint;
 
@@ -200,14 +302,20 @@ function updatePosition(lat, lng, speedMps = null) {
 
     const [smoothLat, smoothLng] = smoothPosition(lat, lng, currentSpeedKmh);
 
-    updateMarkerAndRoute(smoothLat, smoothLng);
-
-    if (!lastRevealPoint) {
+    if (!hasInitialFix) {
+        map.setView([smoothLat, smoothLng], 16);
+        updateMarkerAndRoute(smoothLat, smoothLng);
+        checkPOIs(smoothLat, smoothLng);
         addRevealCircle(smoothLat, smoothLng);
+
+        hasInitialFix = true;
         lastRevealPoint = [smoothLat, smoothLng];
         lastAcceptedPoint = [lat, lng];
         lastPositionTime = now;
     } else {
+        updateMarkerAndRoute(smoothLat, smoothLng);
+        checkPOIs(smoothLat, smoothLng);
+
         const [lastLat, lastLng] = lastRevealPoint;
         revealPath(lastLat, lastLng, smoothLat, smoothLng);
         lastRevealPoint = [smoothLat, smoothLng];
@@ -271,6 +379,57 @@ if (TEST_MODE) {
     }
 }
 
+function getLevelFromXP(xp) {
+    if (xp >= 450) return 4;
+    if (xp >= 250) return 3;
+    if (xp >= 100) return 2;
+    return 1;
+}
+
+function getLevelThresholds(level) {
+    if (level === 1) return { current: 0, next: 100 };
+    if (level === 2) return { current: 100, next: 250 };
+    if (level === 3) return { current: 250, next: 450 };
+    return { current: 450, next: 700 };
+}
+
+function updateXPDisplay() {
+    playerLevel = getLevelFromXP(playerXP);
+
+    const { current, next } = getLevelThresholds(playerLevel);
+    const levelXP = playerXP - current;
+    const neededXP = next - current;
+    const percent = Math.max(0, Math.min(100, (levelXP / neededXP) * 100));
+
+    xpInfoEl.textContent = `Level ${playerLevel} • ${playerXP} EXP`;
+    xpFillEl.style.width = `${percent}%`;
+}
+
+function addXP(amount) {
+    playerXP += amount;
+    updateXPDisplay();
+    saveXP();
+}
+
+function saveXP() {
+    localStorage.setItem("fow_xp", JSON.stringify({
+        xp: playerXP
+    }));
+}
+
+function loadXP() {
+    const data = localStorage.getItem("fow_xp");
+
+    if (!data) {
+        updateXPDisplay();
+        return;
+    }
+
+    const parsed = JSON.parse(data);
+    playerXP = parsed.xp || 0;
+    updateXPDisplay();
+}
+
 function saveProgress() {
     localStorage.setItem("fow_points", JSON.stringify(discoveredPoints));
 }
@@ -292,6 +451,12 @@ function loadProgress() {
 
 function resetProgress() {
     localStorage.removeItem("fow_points");
+    localStorage.removeItem("fow_xp");
+    localStorage.removeItem("fow_pois");
+
+    playerXP = 0;
+    playerLevel = 1;
+    updateXPDisplay();
 
     for (const area of discoveredAreas) {
         map.removeLayer(area);
@@ -302,6 +467,11 @@ function resetProgress() {
     lastRevealPoint = null;
     lastAcceptedPoint = null;
     smoothedPoint = null;
+    hasInitialFix = false;
+    for (const poi of pois) {
+        poi.discovered = false;
+    }
+
 
     if (routeLine) {
         map.removeLayer(routeLine);
@@ -314,6 +484,8 @@ function resetProgress() {
         map.removeLayer(userMarker);
         userMarker = null;
     }
+
+    drawFog();
 
     if (TEST_MODE) {
         location.reload();
@@ -343,6 +515,7 @@ function drawFog() {
         const point = map.latLngToContainerPoint([lat, lng]);
         const radiusPx = metersToPixels(lat, lng, DISCOVERY_RADIUS);
         const softRadiusPx = radiusPx * 1.35;
+
         const gradient = ctx.createRadialGradient(
             point.x, point.y, 0,
             point.x, point.y, softRadiusPx
@@ -362,6 +535,3 @@ function drawFog() {
 }
 
 map.on("move", drawFog);
-
-
-resetProgress
