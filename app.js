@@ -433,14 +433,19 @@ function loadXP() {
 
 function saveProgress() {
     localStorage.setItem("fow_points", JSON.stringify(discoveredPoints));
+    console.log("Gespeicherte Fog-Punkte:", discoveredPoints.length);
 }
 
 function loadProgress() {
     const data = localStorage.getItem("fow_points");
 
-    if (!data) return;
+    if (!data) {
+        console.log("Keine gespeicherten Fog-Punkte gefunden.");
+        return;
+    }
 
     const points = JSON.parse(data);
+    console.log("Geladene Fog-Punkte:", points.length);
 
     for (const [lat, lng] of points) {
         drawRevealCircle(lat, lng);
@@ -536,6 +541,8 @@ function drawFog() {
 }
 
 map.on("move", drawFog);
+
+
 
 
 
