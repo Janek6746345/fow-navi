@@ -70,6 +70,7 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
 loadXP();
+loadProgress();
 loadPOIs();
 renderPOIMarkers();
 
@@ -535,3 +536,6 @@ function drawFog() {
 }
 
 map.on("move", drawFog);
+
+
+
