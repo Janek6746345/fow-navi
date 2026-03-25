@@ -6,7 +6,7 @@ const TEST_LNG = 11.4924;
 
 // Aufdeckungs-Einstellungen
 const DISCOVERY_RADIUS = 60;
-
+const MIN_POINT_DISTANCE = 10; // Meter
 const POI_DISCOVERY_RADIUS = 10;
 
 const pois = [
@@ -44,7 +44,7 @@ let currentSpeedKmh = 0;
 let lastAcceptedPoint = null;
 let smoothedPoint = null;
 let hasInitialFix = false;
-
+let isFollowingUser = true;
 let playerXP = 0;
 let playerLevel = 1;
 
@@ -58,6 +58,12 @@ const speedInfoEl = document.getElementById("speedInfo");
 const xpInfoEl = document.getElementById("xpInfo");
 const xpFillEl = document.getElementById("xpFill");
 const poiToastEl = document.getElementById("poiToast");
+const recenterButtonEl = document.getElementById("recenterButton");
+function updateRecenterButtonVisibility() {
+    if (!recenterButtonEl) return;
+
+    recenterButtonEl.style.display = isFollowingUser ? "none" : "block";
+}
 const canvas = document.getElementById("fogCanvas");
 const ctx = canvas.getContext("2d");
 
@@ -73,6 +79,7 @@ loadXP();
 loadProgress();
 loadPOIs();
 renderPOIMarkers();
+updateRecenterButtonVisibility();
 
 function savePOIs() {
     localStorage.setItem("fow_pois", JSON.stringify(
@@ -181,9 +188,19 @@ function drawRevealCircle(lat, lng) {
 
 // Zeichnen + speichern
 function addRevealCircle(lat, lng) {
+    const newPoint = [lat, lng];
+
+    if (discoveredPoints.length > 0) {
+        const lastPoint = discoveredPoints[discoveredPoints.length - 1];
+        const distance = map.distance(lastPoint, newPoint);
+
+        if (distance < MIN_POINT_DISTANCE) {
+            return; // zu nah → ignorieren
+        }
+    }
+
     drawRevealCircle(lat, lng);
-    discoveredPoints.push([lat, lng]);
-    saveProgress();
+    discoveredPoints.push(newPoint);
     addXP(1);
 }
 
@@ -315,6 +332,11 @@ function updatePosition(lat, lng, speedMps = null) {
         lastPositionTime = now;
     } else {
         updateMarkerAndRoute(smoothLat, smoothLng);
+
+        if (isFollowingUser) {
+            map.panTo([smoothLat, smoothLng]);
+        }
+
         checkPOIs(smoothLat, smoothLng);
 
         const [lastLat, lastLng] = lastRevealPoint;
@@ -329,6 +351,8 @@ function updatePosition(lat, lng, speedMps = null) {
         drawFog();
         lastDrawTime = nowDraw;
     }
+
+    saveProgress();
 
     console.log("Position:", lat, lng, "Speed km/h:", currentSpeedKmh.toFixed(1));
 }
@@ -380,18 +404,33 @@ if (TEST_MODE) {
     }
 }
 
+function getXPRequiredForLevel(level) {
+    if (level <= 1) return 0;
+
+    let required = 100;
+
+    for (let l = 2; l < level; l++) {
+        required = Math.floor(required * 1.5);
+    }
+
+    return required;
+}
+
 function getLevelFromXP(xp) {
-    if (xp >= 450) return 4;
-    if (xp >= 250) return 3;
-    if (xp >= 100) return 2;
-    return 1;
+    let level = 1;
+
+    while (xp >= getXPRequiredForLevel(level + 1)) {
+        level++;
+    }
+
+    return level;
 }
 
 function getLevelThresholds(level) {
-    if (level === 1) return { current: 0, next: 100 };
-    if (level === 2) return { current: 100, next: 250 };
-    if (level === 3) return { current: 250, next: 450 };
-    return { current: 450, next: 700 };
+    return {
+        current: getXPRequiredForLevel(level),
+        next: getXPRequiredForLevel(level + 1)
+    };
 }
 
 function updateXPDisplay() {
@@ -474,6 +513,8 @@ function resetProgress() {
     lastAcceptedPoint = null;
     smoothedPoint = null;
     hasInitialFix = false;
+    isFollowingUser = true;
+    updateRecenterButtonVisibility();
     for (const poi of pois) {
         poi.discovered = false;
     }
@@ -541,6 +582,21 @@ function drawFog() {
 }
 
 map.on("move", drawFog);
+map.on("dragstart", () => {
+    isFollowingUser = false;
+    updateRecenterButtonVisibility();
+});
+
+if (recenterButtonEl) {
+    recenterButtonEl.addEventListener("click", () => {
+        if (userMarker) {
+            const userLatLng = userMarker.getLatLng();
+            map.setView(userLatLng, map.getZoom());
+            isFollowingUser = true;
+            updateRecenterButtonVisibility();
+        }
+    });
+}
 
 
 
