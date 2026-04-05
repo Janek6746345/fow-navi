@@ -5,7 +5,7 @@ const TEST_LAT = 51.5576;
 const TEST_LNG = 11.4924;
 
 // Aufdeckungs-Einstellungen
-const DISCOVERY_RADIUS = 60;
+const DISCOVERY_RADIUS = 45;
 const MIN_POINT_DISTANCE = 10; // Meter
 const POI_DISCOVERY_RADIUS = 10;
 
@@ -45,6 +45,7 @@ let lastAcceptedPoint = null;
 let smoothedPoint = null;
 let hasInitialFix = false;
 let isFollowingUser = true;
+let lastPOILoadPoint = null;
 let playerXP = 0;
 let playerLevel = 1;
 
@@ -82,12 +83,7 @@ renderPOIMarkers();
 updateRecenterButtonVisibility();
 
 function savePOIs() {
-    localStorage.setItem("fow_pois", JSON.stringify(
-        pois.map(poi => ({
-            id: poi.id,
-            discovered: poi.discovered
-        }))
-    ));
+    localStorage.setItem("fow_pois", JSON.stringify(pois));
 }
 
 function loadPOIs() {
@@ -97,9 +93,16 @@ function loadPOIs() {
     const savedPOIs = JSON.parse(data);
 
     for (const savedPoi of savedPOIs) {
-        const poi = pois.find(p => p.id === savedPoi.id);
-        if (poi) {
-            poi.discovered = !!savedPoi.discovered;
+        const existingPoi = pois.find(p => p.id === savedPoi.id);
+
+        if (existingPoi) {
+            existingPoi.discovered = !!savedPoi.discovered;
+            existingPoi.category = savedPoi.category || existingPoi.category;
+            existingPoi.name = savedPoi.name || existingPoi.name;
+            existingPoi.lat = savedPoi.lat || existingPoi.lat;
+            existingPoi.lng = savedPoi.lng || existingPoi.lng;
+        } else {
+            pois.push(savedPoi);
         }
     }
 }
@@ -112,10 +115,27 @@ function renderPOIMarkers() {
     poiMarkers = [];
 
     for (const poi of pois) {
+
+        if (!poi.discovered) continue;
+
+        let markerColor = "gray";
+
+        if (poi.discovered) {
+            markerColor = "green";
+        } else if (poi.category === "landmark") {
+            markerColor = "gold";
+        } else if (poi.category === "food") {
+            markerColor = "red";
+        } else if (poi.category === "fuel") {
+            markerColor = "blue";
+        } else if (poi.category === "shop") {
+            markerColor = "violet";
+        }
+
         const marker = L.circleMarker([poi.lat, poi.lng], {
             radius: 8,
-            color: poi.discovered ? "green" : "gold",
-            fillColor: poi.discovered ? "green" : "gold",
+            color: markerColor,
+            fillColor: markerColor,
             fillOpacity: 0.9,
             weight: 2
         });
@@ -132,10 +152,27 @@ function discoverPOI(poi) {
     poi.discovered = true;
     savePOIs();
     renderPOIMarkers();
-    addXP(100);
+
+    revealPOIArea(poi.lat, poi.lng, poi.category);
+
+    let baseXP = 50;
+
+    if (poi.category === "landmark") {
+        baseXP = 150;
+    } else if (poi.category === "food") {
+        baseXP = 80;
+    } else if (poi.category === "fuel") {
+        baseXP = 60;
+    } else if (poi.category === "shop") {
+        baseXP = 40;
+    }
+
+    const xpReward = Math.floor(baseXP * (1 + (playerLevel - 1) * 0.12));
+
+    addXP(xpReward);
 
     if (poiToastEl) {
-        poiToastEl.textContent = `📍 Entdeckt: ${poi.name} (+100 EXP)`;
+        poiToastEl.textContent = `📍 Entdeckt: ${poi.name} (+${xpReward} EXP)`;
         poiToastEl.style.opacity = "1";
 
         setTimeout(() => {
@@ -155,6 +192,111 @@ function checkPOIs(playerLat, playerLng) {
         if (distance <= POI_DISCOVERY_RADIUS) {
             discoverPOI(poi);
         }
+    }
+}
+
+async function loadPOIsFromOSM(lat, lng) {
+    const radius = 800; // Meter
+
+    const query = `
+        [out:json];
+        (
+          node(around:${radius},${lat},${lng})["tourism"];
+          node(around:${radius},${lat},${lng})["historic"];
+          node(around:${radius},${lat},${lng})["amenity"];
+          node(around:${radius},${lat},${lng})["shop"];
+        );
+        out;
+    `;
+
+    const url = "https://overpass-api.de/api/interpreter";
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            body: query
+        });
+
+        const data = await response.json();
+
+        const elements = data.elements;
+
+        const newPOIs = [];
+
+        for (const el of elements) {
+            if (!el.tags) continue;
+
+            const tags = el.tags;
+
+            // Relevante Kategorien
+            if (
+                tags.tourism ||
+                tags.historic ||
+                tags.amenity === "restaurant" ||
+                tags.amenity === "fast_food" ||
+                tags.amenity === "cafe" ||
+                tags.amenity === "fuel" ||
+                tags.shop
+            ) {
+                if (!el.lat || !el.lon) continue;
+
+                let category = "other";
+
+                if (tags.historic || tags.tourism) {
+                    category = "landmark";
+                } else if (
+                    tags.amenity === "restaurant" ||
+                    tags.amenity === "fast_food" ||
+                    tags.amenity === "cafe"
+                ) {
+                    category = "food";
+                } else if (tags.amenity === "fuel") {
+                    category = "fuel";
+                } else if (tags.shop) {
+                    category = "shop";
+                }
+
+                const name = tags.name || "Unbekannt";
+
+                newPOIs.push({
+                    id: "osm_" + el.id,
+                    name: name,
+                    lat: el.lat,
+                    lng: el.lon,
+                    discovered: false,
+                    category: category
+                });
+            }
+        }
+
+        console.log("Gefilterte POIs:", newPOIs);
+        for (const poi of newPOIs) {
+            if (!pois.find(p => p.id === poi.id)) {
+                pois.push(poi);
+            }
+        }
+        savePOIs();
+        renderPOIMarkers();
+    } catch (error) {
+        console.error("OSM Fehler:", error);
+    }
+}
+
+function maybeLoadMorePOIs(lat, lng) {
+    const currentPoint = [lat, lng];
+
+    if (!lastPOILoadPoint) {
+        lastPOILoadPoint = currentPoint;
+        loadPOIsFromOSM(lat, lng);
+        return;
+    }
+
+    const distance = map.distance(lastPOILoadPoint, currentPoint);
+
+    if (distance >= 300) {
+        lastPOILoadPoint = currentPoint;
+        loadPOIsFromOSM(lat, lng);
+        console.log("Neue POIs nachgeladen.");
     }
 }
 
@@ -202,6 +344,36 @@ function addRevealCircle(lat, lng) {
     drawRevealCircle(lat, lng);
     discoveredPoints.push(newPoint);
     addXP(1);
+}
+
+function revealPOIArea(lat, lng, poiCategory) {
+    let multiplier = 2;
+
+    if (poiCategory === "landmark") {
+        multiplier = 4;
+    } else if (poiCategory === "food") {
+        multiplier = 2.5;
+    } else if (poiCategory === "fuel") {
+        multiplier = 1.8;
+    } else if (poiCategory === "shop") {
+        multiplier = 1.5;
+    }
+
+    const bigRadius = DISCOVERY_RADIUS * multiplier;
+
+    const steps = 20;
+
+    for (let i = 0; i < steps; i++) {
+        const angle = (i / steps) * Math.PI * 2;
+
+        const offsetLat = lat + (Math.cos(angle) * bigRadius) / 111320;
+        const offsetLng = lng + (Math.sin(angle) * bigRadius) / (111320 * Math.cos(lat * Math.PI / 180));
+
+        discoveredPoints.push([offsetLat, offsetLng]);
+    }
+
+    drawFog();
+    saveProgress();
 }
 
 // Zwischenpunkte setzen, damit keine Lücken entstehen
@@ -319,8 +491,10 @@ function updatePosition(lat, lng, speedMps = null) {
     }
 
     const [smoothLat, smoothLng] = smoothPosition(lat, lng, currentSpeedKmh);
+    maybeLoadMorePOIs(smoothLat, smoothLng);
 
     if (!hasInitialFix) {
+
         map.setView([smoothLat, smoothLng], 16);
         updateMarkerAndRoute(smoothLat, smoothLng);
         checkPOIs(smoothLat, smoothLng);
@@ -515,6 +689,7 @@ function resetProgress() {
     hasInitialFix = false;
     isFollowingUser = true;
     updateRecenterButtonVisibility();
+    lastPOILoadPoint = null;
     for (const poi of pois) {
         poi.discovered = false;
     }
