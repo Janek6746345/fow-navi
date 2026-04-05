@@ -202,11 +202,22 @@ async function loadPOIsFromOSM(lat, lng) {
         [out:json];
         (
           node(around:${radius},${lat},${lng})["tourism"];
+          way(around:${radius},${lat},${lng})["tourism"];
+          relation(around:${radius},${lat},${lng})["tourism"];
+
           node(around:${radius},${lat},${lng})["historic"];
+          way(around:${radius},${lat},${lng})["historic"];
+          relation(around:${radius},${lat},${lng})["historic"];
+
           node(around:${radius},${lat},${lng})["amenity"];
+          way(around:${radius},${lat},${lng})["amenity"];
+          relation(around:${radius},${lat},${lng})["amenity"];
+
           node(around:${radius},${lat},${lng})["shop"];
+          way(around:${radius},${lat},${lng})["shop"];
+          relation(around:${radius},${lat},${lng})["shop"];
         );
-        out;
+        out center;
     `;
 
     const url = "https://overpass-api.de/api/interpreter";
@@ -238,7 +249,10 @@ async function loadPOIsFromOSM(lat, lng) {
                 tags.amenity === "fuel" ||
                 tags.shop
             ) {
-                if (!el.lat || !el.lon) continue;
+                const poiLat = el.lat || el.center?.lat;
+                const poiLng = el.lon || el.center?.lon;
+
+                if (!poiLat || !poiLng) continue;
 
                 let category = "other";
 
@@ -261,8 +275,8 @@ async function loadPOIsFromOSM(lat, lng) {
                 newPOIs.push({
                     id: "osm_" + el.id,
                     name: name,
-                    lat: el.lat,
-                    lng: el.lon,
+                    lat: poiLat,
+                    lng: poiLng,
                     discovered: false,
                     category: category
                 });
@@ -772,8 +786,6 @@ if (recenterButtonEl) {
         }
     });
 }
-
-
 
 
 
