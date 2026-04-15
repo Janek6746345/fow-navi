@@ -39,6 +39,8 @@ let lastRevealPoint = null;
 let discoveredAreas = [];
 let discoveredPoints = [];
 let poiMarkers = [];
+let boundaryLayer = null;
+let isBoundaryLoading = false;
 let lastPositionTime = null;
 let currentSpeedKmh = 0;
 let lastAcceptedPoint = null;
@@ -116,11 +118,13 @@ function renderPOIMarkers() {
 
     for (const poi of pois) {
 
-        if (!poi.discovered) continue;
+        const isVisibleHint = !poi.discovered && isPOIVisibleInView(poi);
+
+        if (!poi.discovered && !isVisibleHint) continue;
 
         let markerColor = "gray";
 
-        if (poi.discovered) {
+        if (!poi.discovered) {
             markerColor = "green";
         } else if (poi.category === "landmark") {
             markerColor = "gold";
@@ -183,13 +187,31 @@ function discoverPOI(poi) {
     console.log("POI entdeckt:", poi.name);
 }
 
+function getPOIDiscoveryRadius(poi) {
+    if (poi.category === "landmark") return 10;
+    if (poi.category === "food") return 18;
+    if (poi.category === "fuel") return 22;
+    if (poi.category === "shop") return 25;
+    return 15;
+}
+
+function isPOIVisibleInView(poi) {
+    if (!userMarker) return false;
+
+    const userLatLng = userMarker.getLatLng();
+    const distance = map.distance([userLatLng.lat, userLatLng.lng], [poi.lat, poi.lng]);
+
+    return distance <= DISCOVERY_RADIUS;
+}
+
 function checkPOIs(playerLat, playerLng) {
     for (const poi of pois) {
         if (poi.discovered) continue;
 
         const distance = map.distance([playerLat, playerLng], [poi.lat, poi.lng]);
+        const discoveryRadius = getPOIDiscoveryRadius(poi);
 
-        if (distance <= POI_DISCOVERY_RADIUS) {
+        if (distance <= discoveryRadius) {
             discoverPOI(poi);
         }
     }
@@ -239,6 +261,14 @@ async function loadPOIsFromOSM(lat, lng) {
 
             const tags = el.tags;
 
+            if (tags.name && (
+                tags.shop ||
+                tags.amenity ||
+                tags.tourism ||
+                tags.historic
+            )) {
+                console.log("OSM Kandidat:", tags.name, tags);
+            }
             // Relevante Kategorien
             if (
                 tags.tourism ||
@@ -293,6 +323,84 @@ async function loadPOIsFromOSM(lat, lng) {
         renderPOIMarkers();
     } catch (error) {
         console.error("OSM Fehler:", error);
+    }
+}
+
+async function loadCityBoundary(lat, lng) {
+    if (isBoundaryLoading) return;
+    isBoundaryLoading = true;
+    const query = `
+        [out:json];
+        (
+          relation(around:1000,${lat},${lng})["boundary"="administrative"]["admin_level"~"8|9|10"];
+        );
+        out geom;
+    `;
+
+    const url = "https://overpass-api.de/api/interpreter";
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            body: query
+        });
+
+        if (!response.ok) {
+            throw new Error(`Boundary API Fehler: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.elements || data.elements.length === 0) {
+            console.log("Keine Ortsgrenze gefunden.");
+            return;
+        }
+
+        const relation = data.elements[0];
+
+        if (!relation.members) {
+            console.log("Grenz-Relation ohne Mitglieder gefunden.");
+            return;
+        }
+
+        const boundaryFeatures = [];
+
+        for (const member of relation.members) {
+            if (member.type === "way" && member.geometry) {
+                const coords = member.geometry.map(point => [point.lat, point.lon]);
+
+                boundaryFeatures.push({
+                    type: "Feature",
+                    geometry: {
+                        type: "LineString",
+                        coordinates: coords.map(([lat, lon]) => [lon, lat])
+                    },
+                    properties: {
+                        name: relation.tags?.name || "Unbekannter Ort"
+                    }
+                });
+            }
+        }
+
+        if (boundaryLayer) {
+            map.removeLayer(boundaryLayer);
+        }
+
+        boundaryLayer = L.geoJSON(boundaryFeatures, {
+            style: {
+                color: "#ff0000",
+                weight: 8,
+                opacity: 1
+            }
+        }).addTo(map);
+
+        map.fitBounds(boundaryLayer.getBounds());
+
+        console.log("Ortsgrenze geladen:", relation.tags?.name || "Unbekannt");
+    } catch (error) {
+        console.error("Fehler beim Laden der Ortsgrenze:", error);
+    } finally {
+        isBoundaryLoading = false;
     }
 }
 
@@ -508,6 +616,7 @@ function updatePosition(lat, lng, speedMps = null) {
     maybeLoadMorePOIs(smoothLat, smoothLng);
 
     if (!hasInitialFix) {
+        loadCityBoundary(smoothLat, smoothLng);
 
         map.setView([smoothLat, smoothLng], 16);
         updateMarkerAndRoute(smoothLat, smoothLng);
@@ -539,6 +648,8 @@ function updatePosition(lat, lng, speedMps = null) {
         drawFog();
         lastDrawTime = nowDraw;
     }
+
+    renderPOIMarkers();
 
     saveProgress();
 
@@ -719,6 +830,11 @@ function resetProgress() {
     if (userMarker) {
         map.removeLayer(userMarker);
         userMarker = null;
+    }
+
+    if (boundaryLayer) {
+        map.removeLayer(boundaryLayer);
+        boundaryLayer = null;
     }
 
     drawFog();
