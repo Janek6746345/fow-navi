@@ -69,11 +69,23 @@ function updateRecenterButtonVisibility() {
 }
 const canvas = document.getElementById("fogCanvas");
 const ctx = canvas.getContext("2d");
+let fogDrawRequested = false;
+
+function requestDrawFog() {
+    if (fogDrawRequested) return;
+
+    fogDrawRequested = true;
+
+    requestAnimationFrame(() => {
+        drawFog();
+        fogDrawRequested = false;
+    });
+}
 
 function resizeCanvas() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    drawFog();
+    requestDrawFog();
 }
 
 resizeCanvas();
@@ -494,7 +506,7 @@ function revealPOIArea(lat, lng, poiCategory) {
         discoveredPoints.push([offsetLat, offsetLng]);
     }
 
-    drawFog();
+    requestDrawFog();
     saveProgress();
 }
 
@@ -645,15 +657,26 @@ function updatePosition(lat, lng, speedMps = null) {
 
     const nowDraw = Date.now();
     if (nowDraw - lastDrawTime > DRAW_INTERVAL) {
-        drawFog();
+        requestDrawFog();
         lastDrawTime = nowDraw;
     }
 
-    renderPOIMarkers();
-
-    saveProgress();
+// renderPOIMarkers();  // raus hier
+    saveProgressThrottled();
 
     console.log("Position:", lat, lng, "Speed km/h:", currentSpeedKmh.toFixed(1));
+}
+
+let lastSaveTime = 0;
+const SAVE_INTERVAL = 5000;
+
+function saveProgressThrottled() {
+    const now = Date.now();
+
+    if (now - lastSaveTime < SAVE_INTERVAL) return;
+
+    saveProgress();
+    lastSaveTime = now;
 }
 
 if (TEST_MODE) {
@@ -790,7 +813,7 @@ function loadProgress() {
     }
 
     discoveredPoints = points;
-    drawFog();
+    requestDrawFog();
 }
 
 function resetProgress() {
@@ -837,7 +860,7 @@ function resetProgress() {
         boundaryLayer = null;
     }
 
-    drawFog();
+    requestDrawFog();
 
     if (TEST_MODE) {
         location.reload();
@@ -854,6 +877,7 @@ function metersToPixels(lat, lng, meters) {
 }
 
 function drawFog() {
+    const start = performance.now();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // kompletten Nebel zeichnen
@@ -884,9 +908,11 @@ function drawFog() {
     }
 
     ctx.globalCompositeOperation = "source-over";
+    console.log("drawFog:", (performance.now() - start).toFixed(1), "ms");
 }
 
-map.on("move", drawFog);
+map.on("moveend", requestDrawFog);
+map.on("zoomend", requestDrawFog);
 map.on("dragstart", () => {
     isFollowingUser = false;
     updateRecenterButtonVisibility();
@@ -902,6 +928,3 @@ if (recenterButtonEl) {
         }
     });
 }
-
-
-
