@@ -495,15 +495,26 @@ function revealPOIArea(lat, lng, poiCategory) {
 
     const bigRadius = DISCOVERY_RADIUS * multiplier;
 
-    const steps = 20;
+    const rings = 5;
 
-    for (let i = 0; i < steps; i++) {
-        const angle = (i / steps) * Math.PI * 2;
+    for (let ring = 1; ring <= rings; ring++) {
 
-        const offsetLat = lat + (Math.cos(angle) * bigRadius) / 111320;
-        const offsetLng = lng + (Math.sin(angle) * bigRadius) / (111320 * Math.cos(lat * Math.PI / 180));
+        const ringRadius = bigRadius * (ring / rings);
+        const steps = Math.max(12, ring * 10);
 
-        discoveredPoints.push([offsetLat, offsetLng]);
+        for (let i = 0; i < steps; i++) {
+
+            const angle = (i / steps) * Math.PI * 2;
+
+            const offsetLat =
+                lat + (Math.cos(angle) * ringRadius) / 111320;
+
+            const offsetLng =
+                lng + (Math.sin(angle) * ringRadius) /
+                (111320 * Math.cos(lat * Math.PI / 180));
+
+            discoveredPoints.push([offsetLat, offsetLng]);
+        }
     }
 
     requestDrawFog();
