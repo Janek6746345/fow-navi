@@ -119,6 +119,12 @@ function loadPOIs() {
             pois.push(savedPoi);
         }
     }
+
+    for (const poi of pois) {
+        if (poi.discovered && poi.category === "landmark") {
+            revealPOIArea(poi.lat, poi.lng, poi.category);
+        }
+    }
 }
 
 function renderPOIMarkers() {
@@ -939,8 +945,3 @@ if (recenterButtonEl) {
         }
     });
 }
-
-
-
-
-
