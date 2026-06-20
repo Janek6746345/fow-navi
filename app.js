@@ -911,7 +911,7 @@ function drawFog() {
     console.log("drawFog:", (performance.now() - start).toFixed(1), "ms");
 }
 
-map.on("moveend", requestDrawFog);
+map.on("move", requestDrawFog);
 map.on("zoomend", requestDrawFog);
 map.on("dragstart", () => {
     isFollowingUser = false;
@@ -928,3 +928,8 @@ if (recenterButtonEl) {
         }
     });
 }
+
+
+
+
+
